@@ -1,4 +1,9 @@
-# Project context
+# Project context (legacy)
+
+> **Retired.** This describes the original single-VM Docker host setup, which
+> is being torn down in favor of the `qa-pipeline` / `qa-web` / `qa-db`
+> architecture in the repo root [`README.md`](../README.md). Kept here for
+> reference during the transition.
 
 Working notes for reviewers and future changes. Keep this current when intent
 or open questions change.

@@ -1,67 +1,74 @@
-# WLJ.Devops
+# WLJ.DevOps
 
-Provisioning scripts for standing up a local Docker host inside a
-[Multipass](https://multipass.run/) VM, plus the host-side networking and
-tooling needed to drive it.
+Infrastructure, CI/CD pipelines, and deployment configuration for the WLJ platform. Owned by the platform/infrastructure team. Application domain and business logic lives in the [WLJ.Payments](https://dev.azure.com) repo.
 
-## Contents
+## Environments
 
-| File                   | Runs on | Purpose                                                                                 |
-| ---------------------- | ------- | -------------------------------------------------------------------------------------- |
-| `create-enp2s0.sh`     | Host    | Recreate the `enp2s0` NetworkManager connection with a static IP (`192.168.0.100/24`). |
-| `install-terraform.sh` | Host    | Install Terraform from HashiCorp's official APT repository.                            |
-| `multipass-launch.sh`  | Host    | Launch an Ubuntu 24.04 VM named `docker`, bridged to `enp2s0`, provisioned via cloud-init. |
-| `docker-init.yaml`     | VM      | Local `#cloud-config` alternative that installs Docker Engine + Compose. See notes below. |
+| Environment | Description |
+|---|---|
+| **Dev** | Local Windows machine — Visual Studio, Docker Desktop, .NET Aspire orchestration |
+| **QA** | Ubuntu 24.04 Server on-prem — pipeline deployments, mimics production topology |
 
-## Prerequisites
+QA deployments occur once or twice daily via Azure Pipelines, with additional adhoc deployments as needed.
 
-- Ubuntu host with NetworkManager (`nmcli`)
-- [`multipass`](https://multipass.run/install) installed on the host
-- A wired interface named `enp2s0` (adjust the scripts if yours differs)
-- `sudo` privileges
+## Infrastructure Layout
 
-## Getting started
+**Host OS:** Ubuntu 24.04 Server (on-prem, static IP via `enp2s0`)
 
-```bash
-# 1. Configure the host's wired interface with a static IP
-./create-enp2s0.sh
+Tools installed directly on host:
+- **Claude Code** — agentic coding and orchestration
+- **Docker Engine** — ad hoc container runs (e.g. Terraform)
 
-# 2. Install Terraform on the host
-./install-terraform.sh
+Terraform is intentionally NOT installed directly on the host — it runs via container on `qa-pipeline` as part of the Azure Pipeline, keeping the host clean and the version controlled.
 
-# 3. Launch the Docker VM
-./multipass-launch.sh
+```
+Ubuntu 24.04 Host (enp2s0, static IP)
+├── Claude Code                  -- agentic coding, orchestration
+├── Docker Engine                -- ad hoc container runs (e.g. Terraform)
+│
+├── VM: qa-pipeline              -- Azure Pipelines self-hosted agent
+│     - .NET SDK
+│     - Docker CLI
+│     - Azure Pipelines agent
+│     - Self-hosted Docker registry
+│     - Terraform (via container)
+│
+├── VM: qa-web                   -- Application runtime
+│     - Docker Engine
+│     - App containers
+│
+└── VM: qa-db                    -- Data / infrastructure
+      - Docker Engine
+      - PostgreSQL container
+      - Future: Redis, messaging, etc.
 ```
 
-Once the VM is up:
+All VMs are bridged via `enp2s0` and have their own LAN IP.
 
-```bash
-multipass shell docker
-docker run hello-world
-```
+See `docs/multipass-bridged-network-setup.md` for the full network setup reference.
 
-## Notes
+## Pipelines
 
-- `multipass-launch.sh` currently provisions the VM with Canonical's upstream
-  [`cloud-init-docker.yaml`](https://github.com/canonical/multipass/blob/main/data/cloud-init-yaml/cloud-init-docker.yaml)
-  pulled from `main`, so the provisioning can drift as that file changes.
-- `docker-init.yaml` is a local alternative to that upstream file. It has been
-  used successfully before but is not yet wired into `multipass-launch.sh`. See
-  [`CONTEXT.md`](CONTEXT.md) for its status and the open verification item.
-- `create-enp2s0.sh` deletes and recreates the `enp2s0` connection. The static
-  address, gateway, and DNS servers are hard-coded — edit them to match your
-  network.
+- **WLJ.Payments** — build, test, push image to self-hosted registry, deploy to `qa-web`
+- **WLJ.DevOps** — Terraform plan/apply, manages VM infrastructure
 
-## Build and test
+Pipelines are intentionally separate — infrastructure changes have their own review and approval lifecycle.
 
-There is nothing to build. To sanity-check the shell scripts:
+## Container Registry
 
-```bash
-shellcheck ./*.sh
-```
+Self-hosted Docker registry running on `qa-pipeline`. Keeps images on-prem, no licensing cost, no pull rate limits.
 
-## Contribute
+## Infrastructure as Code
 
-Branch from `master`, make your change, and open a pull request. Keep host-side
-and VM-side concerns in separate scripts, and note in this README which side a
-new script runs on.
+Terraform manages Multipass VM provisioning and future Azure resources. Runs via container on `qa-pipeline` — never installed directly on the host.
+
+## Next Steps
+
+- [ ] Create `WLJ.DevOps` repo in Azure Repos
+- [ ] Delete old throwaway Multipass VM
+- [ ] Provision `qa-pipeline`, `qa-web`, `qa-db` Multipass VMs (bridged via `enp2s0`)
+- [ ] Install Azure Pipelines self-hosted agent on `qa-pipeline` and register with Azure DevOps
+- [ ] Install Docker Engine on `qa-pipeline`, `qa-web`, `qa-db`
+- [ ] Set up self-hosted Docker registry on `qa-pipeline`
+- [ ] Draft `azure-pipelines.yml` for `WLJ.Payments` — build, push, deploy to `qa-web`
+- [ ] Draft Terraform definitions for Multipass VM provisioning
