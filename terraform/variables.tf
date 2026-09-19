@@ -21,3 +21,15 @@ variable "lan_cidr" {
   type        = string
   default     = "192.168.0.0/24"
 }
+
+variable "ansible_private_key_path" {
+  description = "Host path for the generated Ansible SSH private key (kept out of git)"
+  type        = string
+  default     = "~/.ssh/ansible_ed25519"
+}
+
+variable "ansible_pubkey_scratch_path" {
+  description = "Scratch path inside each VM where the Ansible public key is uploaded before being appended to authorized_keys"
+  type        = string
+  default     = "/tmp/ansible_key.pub"
+}

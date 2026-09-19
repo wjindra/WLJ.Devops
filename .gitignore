@@ -16,3 +16,20 @@ terraform.rc
 
 # Stray sandbox artifact, not project-related
 network-cache/
+
+# Ansible
+*.retry
+ansible/collections/
+ansible_ed25519
+ansible_ed25519.pub
+
+# ADO self-hosted agent local working state (only present if config.sh is
+# ever run outside Docker, e.g. inside agent/ for local debugging)
+agent/_work/
+agent/_diag/
+agent/.agent
+agent/.credentials
+agent/.credentials_rsaparams
+agent/.service
+agent/.path
+agent/*.log

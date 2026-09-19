@@ -1,0 +1,64 @@
+# WLJ.DevOps pipeline: Ansible provisioning. Runs on Agent #1 (the
+# Dockerized self-hosted agent on the root host — see agent/README.md).
+# Terraform is intentionally not run here; it stays a manual, host-side
+# operation (see docs/ansible-provisioning-plan.md, Open Assumption #1).
+
+trigger:
+  branches:
+    include:
+      - main
+  paths:
+    include:
+      - ansible/*
+      - azure-pipelines.yml
+
+pool:
+  name: onprem-infra
+
+variables:
+  - group: wlj-devops-secrets
+
+stages:
+  - stage: Validate
+    jobs:
+      - job: Lint
+        steps:
+          - script: ansible-playbook --syntax-check -i ansible/inventory/qa.ini ansible/playbooks/pipeline.yml
+            displayName: 'Syntax check pipeline.yml'
+          - script: ansible-playbook --syntax-check -i ansible/inventory/qa.ini ansible/playbooks/web.yml
+            displayName: 'Syntax check web.yml'
+          - script: ansible-playbook --syntax-check -i ansible/inventory/qa.ini ansible/playbooks/db.yml
+            displayName: 'Syntax check db.yml'
+
+  - stage: Provision
+    dependsOn: Validate
+    jobs:
+      - job: Ansible
+        steps:
+          - task: DownloadSecureFile@1
+            name: ansibleSshKey
+            inputs:
+              secureFile: ansible_ed25519
+
+          - script: chmod 600 $(ansibleSshKey.secureFilePath)
+            displayName: 'Lock down downloaded private key'
+
+          - script: |
+              ansible-playbook -i ansible/inventory/qa.ini ansible/playbooks/pipeline.yml \
+                --private-key "$(ansibleSshKey.secureFilePath)" \
+                -e ado_org_url="$(ADO_ORG_URL)" \
+                -e ado_agent_pat="$(ADO_AGENT_PAT)"
+            displayName: 'Configure qa-pipeline'
+
+          - script: |
+              ansible-playbook -i ansible/inventory/qa.ini ansible/playbooks/web.yml \
+                --private-key "$(ansibleSshKey.secureFilePath)"
+            displayName: 'Configure qa-web'
+
+          - script: |
+              ansible-playbook -i ansible/inventory/qa.ini ansible/playbooks/db.yml \
+                --private-key "$(ansibleSshKey.secureFilePath)" \
+                -e postgres_user="$(POSTGRES_USER)" \
+                -e postgres_password="$(POSTGRES_PASSWORD)" \
+                -e postgres_db="$(POSTGRES_DB)"
+            displayName: 'Configure qa-db'

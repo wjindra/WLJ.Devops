@@ -1,0 +1,23 @@
+---
+# Configures qa-pipeline: registers it as an Azure Pipelines self-hosted
+# agent (Agent #2, for the future WLJ.Payments pipeline) and runs a
+# self-hosted Docker registry. Docker Engine itself is already installed via
+# cloud-init at VM launch, so it isn't reinstalled here.
+- name: Configure qa-pipeline (Azure Pipelines agent + self-hosted registry)
+  hosts: pipeline
+  become: true
+  roles:
+    - role: ado_agent
+      vars:
+        ado_org_url: "{{ ado_org_url }}"
+        ado_pat: "{{ ado_agent_pat }}"
+        ado_pool: "{{ ado_agent_pool | default('qa-payments') }}"
+        ado_agent_name: "{{ ado_agent_name | default('qa-pipeline-agent') }}"
+    - role: docker_app
+      vars:
+        docker_app_name: registry
+        docker_app_image: "registry:2"
+        docker_app_ports:
+          - "5000:5000"
+        docker_app_volumes:
+          - "registry_data:/var/lib/registry"

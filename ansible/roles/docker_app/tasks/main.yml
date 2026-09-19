@@ -1,0 +1,12 @@
+---
+- name: "Run {{ docker_app_name }} container"
+  community.docker.docker_container:
+    name: "{{ docker_app_name }}"
+    image: "{{ docker_app_image }}"
+    state: started
+    restart_policy: "{{ docker_app_restart_policy }}"
+    ports: "{{ docker_app_ports }}"
+    env: "{{ docker_app_env }}"
+    volumes: "{{ docker_app_volumes }}"
+    networks: "{{ [{'name': docker_app_network}] if docker_app_network else omit }}"
+    pull: true

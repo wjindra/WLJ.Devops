@@ -1,0 +1,6 @@
+---
+docker_app_ports: []
+docker_app_env: {}
+docker_app_volumes: []
+docker_app_restart_policy: unless-stopped
+docker_app_network: null

@@ -1,0 +1,5 @@
+---
+ado_agent_version: "4.255.0"
+ado_agent_dir: /opt/azp-agent
+ado_pool: qa-payments
+ado_agent_name: "{{ inventory_hostname }}-agent"

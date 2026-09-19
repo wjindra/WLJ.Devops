@@ -1,0 +1,17 @@
+---
+- name: Configure qa-db (PostgreSQL)
+  hosts: db
+  become: true
+  roles:
+    - role: docker_app
+      vars:
+        docker_app_name: postgres
+        docker_app_image: "postgres:16"
+        docker_app_ports:
+          - "5432:5432"
+        docker_app_env:
+          POSTGRES_USER: "{{ postgres_user }}"
+          POSTGRES_PASSWORD: "{{ postgres_password }}"
+          POSTGRES_DB: "{{ postgres_db | default('wlj') }}"
+        docker_app_volumes:
+          - "postgres_data:/var/lib/postgresql/data"

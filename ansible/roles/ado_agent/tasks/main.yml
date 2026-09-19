@@ -1,0 +1,61 @@
+---
+# Installs and registers the Azure Pipelines Linux self-hosted agent as a
+# systemd service. Idempotent: skips install/registration entirely once
+# `.agent` exists, so reruns (e.g. from every WLJ.DevOps pipeline execution)
+# are safe no-ops.
+- name: Check whether the agent is already configured
+  ansible.builtin.stat:
+    path: "{{ ado_agent_dir }}/.agent"
+  register: ado_agent_configured
+
+- name: Create agent directory
+  ansible.builtin.file:
+    path: "{{ ado_agent_dir }}"
+    state: directory
+    owner: ubuntu
+    group: ubuntu
+    mode: "0755"
+  when: not ado_agent_configured.stat.exists
+
+- name: Download Azure Pipelines agent
+  ansible.builtin.unarchive:
+    src: "https://vstsagentpackage.azureedge.net/agent/{{ ado_agent_version }}/vsts-agent-linux-x64-{{ ado_agent_version }}.tar.gz"
+    dest: "{{ ado_agent_dir }}"
+    remote_src: true
+    owner: ubuntu
+    group: ubuntu
+  when: not ado_agent_configured.stat.exists
+
+- name: Install agent dependencies
+  ansible.builtin.command: ./bin/installdependencies.sh
+  args:
+    chdir: "{{ ado_agent_dir }}"
+  when: not ado_agent_configured.stat.exists
+
+- name: Configure agent (unattended)
+  ansible.builtin.command: >
+    ./config.sh --unattended
+    --url {{ ado_org_url }}
+    --auth pat
+    --token {{ ado_pat }}
+    --pool {{ ado_pool }}
+    --agent {{ ado_agent_name }}
+    --acceptTeeEula
+  args:
+    chdir: "{{ ado_agent_dir }}"
+  become: true
+  become_user: ubuntu
+  when: not ado_agent_configured.stat.exists
+  no_log: true
+
+- name: Install agent as a systemd service
+  ansible.builtin.command: ./svc.sh install ubuntu
+  args:
+    chdir: "{{ ado_agent_dir }}"
+  when: not ado_agent_configured.stat.exists
+
+- name: Start and enable agent service
+  ansible.builtin.command: ./svc.sh start
+  args:
+    chdir: "{{ ado_agent_dir }}"
+  when: not ado_agent_configured.stat.exists

@@ -3,6 +3,12 @@ terraform {
     multipass = {
       source = "todoroff/multipass"
     }
+    tls = {
+      source = "hashicorp/tls"
+    }
+    local = {
+      source = "hashicorp/local"
+    }
   }
 }
 

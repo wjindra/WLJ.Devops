@@ -1,0 +1,20 @@
+---
+# Scaffold only. Docker Engine is already installed via cloud-init at VM
+# launch. Real app deployment (pulling/running the WLJ.Payments image)
+# belongs to the separate WLJ.Payments pipeline/repo, not here.
+- name: Scaffold qa-web app runtime
+  hosts: web
+  become: true
+  tasks:
+    - name: Ensure app directory exists
+      ansible.builtin.file:
+        path: /opt/app
+        state: directory
+        owner: ubuntu
+        group: ubuntu
+        mode: "0755"
+
+    - name: Ensure app docker network exists
+      community.docker.docker_network:
+        name: app_net
+        state: present
