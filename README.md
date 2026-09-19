@@ -2,6 +2,8 @@
 
 Infrastructure, CI/CD pipelines, and deployment configuration for the WLJ platform. Owned by the platform/infrastructure team. Application domain and business logic lives in the [WLJ.Payments](https://dev.azure.com) repo.
 
+**Canonical repo:** Azure DevOps (`origin`). This repo is also mirrored (public, `master` + active feature branches only) to [github.com/wjindra/WLJ.Devops](https://github.com/wjindra/WLJ.Devops) as a `github` remote, so it can be reviewed from Claude Desktop. Push changes to `origin` first; mirror to `github` as needed.
+
 ## Environments
 
 | Environment | Description |
