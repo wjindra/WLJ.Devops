@@ -1,7 +1,13 @@
 # WLJ.DevOps pipeline: Ansible provisioning. Runs on Agent #1 (the
-# Dockerized self-hosted agent on the root host — see agent/README.md).
+# Dockerized self-hosted agent on the root host -- see agent/README.md).
 # Terraform is intentionally not run here; it stays a manual, host-side
 # operation (see docs/ansible-provisioning-plan.md, Open Assumption #1).
+#
+# Ansible itself is not installed on Agent #1. Each job below runs inside
+# the `ansible` container (ansible/Dockerfile, built locally as
+# `wlj-ansible:local`) via Azure Pipelines' native container-job feature --
+# Agent #1 launches it through its Docker-outside-of-Docker access to the
+# host daemon.
 
 trigger:
   branches:
@@ -11,6 +17,11 @@ trigger:
     include:
       - ansible/*
       - azure-pipelines.yml
+
+resources:
+  containers:
+    - container: ansible
+      image: wlj-ansible:local
 
 pool:
   name: onprem-infra
@@ -22,6 +33,7 @@ stages:
   - stage: Validate
     jobs:
       - job: Lint
+        container: ansible
         steps:
           - script: ansible-playbook --syntax-check -i ansible/inventory/qa.ini ansible/playbooks/pipeline.yml
             displayName: 'Syntax check pipeline.yml'
@@ -34,6 +46,7 @@ stages:
     dependsOn: Validate
     jobs:
       - job: Ansible
+        container: ansible
         steps:
           - task: DownloadSecureFile@1
             name: ansibleSshKey

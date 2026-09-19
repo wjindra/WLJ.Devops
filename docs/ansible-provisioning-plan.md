@@ -5,7 +5,7 @@
 Branch `feature/wjindra/ansible-provisioning` exists but has no Ansible content yet. The README already documents a target architecture — three Multipass VMs (`qa-pipeline`, `qa-web`, `qa-db`, already provisioned via Terraform, IPs `192.168.0.19/.18/.17`), a target `ansible/` layout, and two separate ADO pipelines (`WLJ.DevOps` for provisioning, `WLJ.Payments` for app deploys) — but none of it is built. This plan implements that: SSH access from the host to the VMs, the Ansible playbooks/roles, a Dockerized self-hosted ADO agent running on the host that drives provisioning, and the `WLJ.DevOps` pipeline itself.
 
 Two agents were deliberately chosen (confirmed in conversation), both on-prem:
-- **Agent #1** — a Docker container on the root host, bundling the ADO agent runtime + Ansible. Drives the `WLJ.DevOps` pipeline (Ansible provisioning only — Terraform stays manual, see Open Assumptions).
+- **Agent #1** — a Docker container on the root host, running a plain Azure Pipelines agent (no Ansible baked in). Drives the `WLJ.DevOps` pipeline (Ansible provisioning only — Terraform stays manual, see Open Assumptions) by launching each job as an Azure Pipelines *container job* — Ansible itself runs in a separate, purpose-built container (`ansible/Dockerfile`), started fresh per run via Agent #1's Docker-outside-of-Docker access to the host daemon. This is the platform-native way to containerize Ansible on the host, rather than baking it into Agent #1's own image.
 - **Agent #2** — the Azure Pipelines self-hosted agent installed *inside* `qa-pipeline` by Ansible's `pipeline.yml`. Drives the future `WLJ.Payments` pipeline (app builds/deploys/migrations). Not built in this pass beyond installing the agent + self-hosted registry.
 
 This also resolves the chicken-and-egg problem of "the pipeline that configures `qa-pipeline` needs an agent, but the agent lives on `qa-pipeline`": Agent #1 is registered once, manually, outside any pipeline, and its first `WLJ.DevOps` run installs Agent #2.
@@ -55,29 +55,41 @@ Static inventory matches README's documented target layout exactly. Dynamic inve
 
 `docker_app` role is reused by `pipeline.yml` (registry) and `db.yml` (postgres) but deliberately *not* used by `web.yml`, which stays a scaffold since real app-deploy logic belongs to the separate WLJ.Payments pipeline/repo.
 
-## 3. Agent #1 — Dockerized self-hosted ADO agent
+## 3. Agent #1 — Dockerized self-hosted ADO agent, plus a separate Ansible container-job image
+
+**Revised from the original design**: Agent #1's own image does *not* bundle Ansible. Instead, Azure Pipelines' native **container job** feature runs each job's steps inside a dedicated Ansible image, launched fresh per run via Agent #1's Docker-outside-of-Docker access to the host's Docker daemon. This is the platform-native mechanism for containerizing a pipeline's tooling, rather than a hand-rolled combination Dockerfile.
+
+**`ansible/Dockerfile`** (new, alongside the rest of `ansible/`):
+```
+FROM alpine/ansible:latest
+RUN apk add --no-cache openssh-client
+COPY requirements.yml /tmp/requirements.yml
+RUN ansible-galaxy collection install -r /tmp/requirements.yml
+```
+`alpine/ansible` was chosen as the base — small (~96MB), tag'd by ansible-core version, actively maintained. `cytopia/ansible:latest-tools` (also Alpine-based, nightly-built) is a documented drop-in alternative if `alpine/ansible` ever stops being pullable/maintained. Built once locally: `docker build -t wlj-ansible:local ansible/`. No registry needed for a single-host setup — Azure Pipelines' container-job feature just needs the tagged image present in the host's local Docker image cache; rebuild whenever `requirements.yml` changes.
 
 **New top-level `agent/` directory** (sibling to `terraform/`/`ansible/`, not nested — it's a pipeline-runner image, not Ansible-internal content):
 ```
 agent/
-├── Dockerfile      -- ubuntu:24.04 base; installs ansible-core + collections from ansible/requirements.yml; downloads a pinned Azure Pipelines agent release; openssh-client for connecting out
+├── Dockerfile      -- ubuntu:24.04 base; downloads a pinned Azure Pipelines agent release; installs only the Docker CLI (no daemon) to launch container jobs via the mounted host socket
 ├── entrypoint.sh   -- standard MS container-agent pattern: config.sh --unattended from AZP_URL/AZP_TOKEN/AZP_POOL/AZP_AGENT_NAME env vars, traps SIGTERM for clean remove.sh, execs run.sh
 └── README.md       -- build/run instructions
 ```
-Build with repo root as context (`docker build -f agent/Dockerfile -t wlj-devops-agent .`) so it can `COPY ansible/requirements.yml`.
+Self-contained build (`docker build -t wlj-devops-agent agent/`) — no longer needs repo root as context, since it no longer copies in `ansible/requirements.yml`.
 
-One-time manual registration (not part of any pipeline):
+One-time manual registration (not part of any pipeline), with the host's Docker socket mounted in so Agent #1 can launch container jobs:
 ```
 docker run -d --name wlj-devops-agent --restart unless-stopped \
+  -v /var/run/docker.sock:/var/run/docker.sock \
   -e AZP_URL=https://dev.azure.com/<org> -e AZP_TOKEN=<PAT> \
   -e AZP_POOL=onprem-infra -e AZP_AGENT_NAME=onprem-agent-1 \
   wlj-devops-agent
 ```
-No SSH key is baked into the image or bind-mounted at registration — it's delivered fresh per pipeline run via an ADO Secure File download step (see §4), so key rotation doesn't require rebuilding/restarting the agent container.
+No SSH key is baked into either image or bind-mounted at registration — it's delivered fresh per pipeline run via an ADO Secure File download step (see §4), so key rotation doesn't require rebuilding/restarting anything. `$(Agent.TempDirectory)` (where `DownloadSecureFile@1` places it) is auto-mounted into container jobs by Azure Pipelines, so this continues to work unchanged inside the `ansible` container.
 
 ## 4. `WLJ.DevOps` pipeline — `/azure-pipelines.yml`
 
-Repo root, targeting the `onprem-infra` pool (Agent #1). Two stages:
+Repo root, targeting the `onprem-infra` pool (Agent #1). Declares the Ansible image via `resources.containers` (`container: ansible`, `image: wlj-ansible:local`) and sets `container: ansible` on every job, so all steps run inside it rather than directly on Agent #1. Two stages:
 - **Validate** — `ansible-playbook --syntax-check` for all three playbooks.
 - **Provision** — `DownloadSecureFile@1` pulls the `ansible_ed25519` private key, then runs `pipeline.yml` → `web.yml` → `db.yml` in order via `ansible-playbook -i ansible/inventory/qa.ini <playbook> --private-key <downloaded path> -e ...`, with secrets (`ADO_ORG_URL`, `ADO_AGENT_PAT`, `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB`) sourced from a `wlj-devops-secrets` variable group.
 
@@ -121,7 +133,7 @@ agent/*.log
 3. `roles/docker_app` + `db.yml` — run manually against `qa-db`; verify Postgres container + volume persistence.
 4. `web.yml` scaffold — run manually against `qa-web`.
 5. `roles/ado_agent` + `pipeline.yml` — do ADO steps 2 & 4 first; run manually against `qa-pipeline`; verify Agent #2 shows Online and `registry:2` is reachable on :5000.
-6. `agent/Dockerfile` + `entrypoint.sh` — build, then do ADO steps 1 & 3, run the one-time registration; verify Agent #1 shows Online.
+6. `agent/Dockerfile` + `entrypoint.sh` — build, then do ADO steps 1 & 3, run the one-time registration; verify Agent #1 shows Online. Also build `ansible/Dockerfile` locally (`docker build -t wlj-ansible:local ansible/`).
 7. `azure-pipelines.yml` — write it, do ADO steps 5–8.
 8. First real pipeline run (Validate → Provision). Rerun once to confirm idempotency.
 9. Follow-up (not this pass): update README's Next Steps checklist and repo-structure diagram/architecture text to include `agent/` and reflect Ansible actually running containerized in the pipeline path.
@@ -133,8 +145,9 @@ agent/*.log
 3. Agent #2's pool name (`qa-payments`) is a placeholder — needs a real decision.
 4. `community.docker` collection (+ either the Python `docker` SDK or `docker_compose_v2` shelling to the CLI) is needed for `docker_app`'s container tasks — not explicitly requested, added out of necessity.
 5. ADO agent version pinned as a Dockerfile `ARG` (Microsoft provides no "latest" URL) — needs an update policy/owner.
-6. Agent #1 bundles Ansible in Docker, which is a departure from the README's stated rationale for keeping Ansible host-native ("no container-runtime dependency"). This plan also installs Ansible natively on the host for manual dry runs (step 2 above), but the pipeline path always uses the containerized copy — README's tooling list/diagram will need a follow-up edit to stay accurate.
+6. Ansible runs containerized on the root host via Azure Pipelines container jobs (a separate `wlj-ansible:local` image, not baked into Agent #1), which is a departure from the README's original stated rationale for keeping Ansible host-native ("no container-runtime dependency"). This plan also installs Ansible natively on the host for manual dry runs (step 2 above), but the pipeline path always uses the containerized copy — README's tooling list/diagram was updated to reflect this (see the Ansible bullet under Infrastructure Layout).
 7. No manual-approval ADO Environment gating the Provision stage by default (PLANNING.md's gate note was framed around `terraform apply`, which isn't in this pipeline at all) — can be added later if wanted.
+8. `wlj-ansible:local` is only ever built into the local Docker image cache on Agent #1's host, not pushed to any registry — fine for a single-host setup, but if a second on-prem agent is ever added to the `onprem-infra` pool, it would need the image built there too (or the image pushed to the self-hosted registry once `pipeline.yml` has set that up).
 
 ## Verification
 

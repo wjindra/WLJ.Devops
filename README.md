@@ -40,7 +40,7 @@ Tools installed directly on host:
 - **Docker Engine** — ad hoc container runs
 - **Dnsmasq** — local DNS for VM hostnames
 - **ZeroTier** — hybrid cloud networking
-- **Ansible** — VM configuration management (control node only, not containerized — kept alongside Dnsmasq on bare metal so provisioning has no container-runtime dependency)
+- **Ansible** — VM configuration management, run containerized via Azure Pipelines container jobs (see `agent/` and `ansible/Dockerfile`), launched by the on-host self-hosted ADO agent's Docker-outside-of-Docker access rather than installed directly on bare metal
 - **Terraform** — installed directly on the host, not containerized, and not on `qa-pipeline`
 
 Terraform runs directly on the host rather than via container: the `todoroff/multipass` provider (like its predecessor) shells out to the `multipass` CLI, which on this host is a snap-confined binary tightly coupled to `multipassd`'s mount namespace — it doesn't hand off cleanly to a generic Docker container. It also isn't installed on `qa-pipeline`, since that VM is itself one of the things Terraform provisions, which would create a bootstrap dependency on the first `apply`.
@@ -127,10 +127,14 @@ Switched to [`todoroff/multipass`](https://registry.terraform.io/providers/todor
 
 ## Next Steps
 
-- [ ] Provision `qa-pipeline`, `qa-web`, `qa-db` via `terraform apply`
+- [x] Provision `qa-pipeline`, `qa-web`, `qa-db` via `terraform apply`
 - [ ] Install Dnsmasq on Ubuntu host, configure VM hostnames
 - [ ] Install ZeroTier on Ubuntu host and VMs
-- [ ] Write Ansible playbooks for each VM role
-- [ ] Install Azure Pipelines self-hosted agent on `qa-pipeline`
-- [ ] Set up self-hosted Docker registry on `qa-pipeline`
+- [x] Write Ansible playbooks for each VM role
+- [x] Draft `azure-pipelines.yml` for `WLJ.DevOps` — Ansible provisioning
+- [ ] Run the Terraform SSH bootstrap (`terraform/ssh_bootstrap.tf`) so Ansible can reach the VMs
+- [ ] Build and register the on-host ADO agent (`agent/`) and the Ansible container-job image (`ansible/Dockerfile`) — see `agent/README.md`
+- [ ] Complete manual ADO setup (agent pools, PAT, Secure File, variable group) — see `docs/ansible-provisioning-plan.md`
+- [ ] Run `ansible/playbooks/pipeline.yml` — installs the Azure Pipelines self-hosted agent + self-hosted Docker registry on `qa-pipeline`
+- [ ] Run `ansible/playbooks/db.yml` and `web.yml` against `qa-db` and `qa-web`
 - [ ] Draft `azure-pipelines.yml` for `WLJ.Payments` — build, push, deploy to `qa-web`
